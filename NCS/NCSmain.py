@@ -88,8 +88,8 @@ def main(ep_per_cpu, game, configuration_file, run_name):
             e_r = 0
             e_l = 0
             ind, p = optimizer.get_parameters()
+            policy.set_parameters(p)
             for j in range(k):
-                policy.set_parameters(p)
                 e_rew, e_len = policy.rollout()
                 e_r += e_rew
                 e_l += e_len
@@ -169,8 +169,8 @@ def main(ep_per_cpu, game, configuration_file, run_name):
                 e_r = 0
                 e_l = 0
                 p = ppp[((rank-1)+i)*optimizer.n:(rank+i)*optimizer.n] + np.random.normal(scale = optimizer.sigma,size = optimizer.n)
+                policy.set_parameters(p)
                 for j in range(k):
-                    policy.set_parameters(p)
                     e_rew, e_len = policy.rollout()
                     e_r += e_rew
                     e_l += e_len
