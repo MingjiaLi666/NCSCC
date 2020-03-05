@@ -8,7 +8,7 @@ class BaseOptimizer(object):
         # Worker id (MPI stuff).
         self.rank = rank
         # 2 GB of random noise as in OpenAI paper.
-        self.noise_table = np.random.RandomState(123).randn(int(5e8)).astype('float32')
+#         self.noise_table = np.random.RandomState(123).randn(int(5e8)).astype('float32')
         # Dimensionality of the problem
         self.n = len(parameters)
         # Current solution (The one that we report).
@@ -20,8 +20,8 @@ class BaseOptimizer(object):
         self.iteration = 0
 
     # Sample random index from the noise table.
-    def r_noise_id(self):
-        return np.random.random_integers(0, len(self.noise_table)-self.n)
+#     def r_noise_id(self):
+#         return np.random.random_integers(0, len(self.noise_table)-self.n)
 
     # Returns parameters to evaluate for a worker and an ID.
     # ID is used when computing update step (It might indicate index in the noise table).
@@ -34,8 +34,8 @@ class BaseOptimizer(object):
         return np.sqrt(np.sum(np.square(vec)))
 
     # Updates Optimizer based on IDs and rewards from evaluations
-    def update(self, ids, rewards):
-        raise NotImplementedError
+    # def update(self, ids, rewards):
+    #     raise NotImplementedError
 
     # Use logger to log basic info after each iteration
     def log(self, logger):
@@ -257,6 +257,10 @@ class NCSOptimizer(BaseOptimizer):
 
         self.lam = lam
         self.sigma = settings['sigma']
+        self.parameters1 = self.parameters
+        self.rew = 0
+        self.rew1 =0
+        self.updateCount = 0
 
         # One could experiment with different learning_rates.
         # Disabled for our experiments (by setting to 1).
@@ -288,40 +292,186 @@ class NCSOptimizer(BaseOptimizer):
         #    return None, self.parameters
         #noise = np.random.normal(scale = self.sigma,size = (1,self.n))
         #p = self.parameters + noise
-        return None,self.parameters		
-    def update(self):
-        return None
-    def updatesigma(self,epoch,upC):
-        c = upC[self.rank-1]
-        if c/epoch<0.2:
+        return self.parameters
+    def get_parameters1(self):
+        self.parameters1 = self.parameters + np.random.normal(scale = self.sigma,size = self.n)
+        return self.parameters1
+    def update(self,ppp,BestScore,sigmas,llambda):
+        def calBdistance(n, para, para1, sigma, sigma1):
+            xixj = para - para1
+            part1 = 1 / 8 * np.dot(xixj, xixj.T) * 2 / (sigma ** 2 + sigma1 ** 2 + 1e-8)
+            part2 = 1 / 2 * n * np.log(1e-8 + (sigma ** 2 + sigma1 ** 2) / (2 * sigma * sigma1 + 1e-8))
+            return part1 + part2
+
+        def calCorr(n, ppp, para1, sigmalist, sigma1, order1):
+            # order = np.argsort(nums)
+            DBlist = []
+            for i in range(len(sigmalist)):
+                if i != order1:
+                    para = ppp[n * i:n * (i + 1)]
+                    sigma = sigmalist[i]
+                    DB = calBdistance(n, para, para1, sigma, sigma1)
+                    DBlist.append(DB)
+            return np.min(DBlist)
+        Corr = calCorr(self.n, ppp, self.parameters, sigmas, self.sigma, self.rank-1)
+        Corr1= calCorr(self.n, ppp, self.parameters1, sigmas, self.sigma, self.rank-1)
+        Corr1 = Corr1 / (Corr + Corr1)
+        fx = -self.rew + BestScore
+        fx1 = -self.rew1 + BestScore
+        fx1 = fx1 / (fx + fx1)
+        jud = fx1 / Corr1
+        if jud < llambda:
+            self.parameters = self.parameters1
+            self.rew = self.rew1
+            self.updateCount += 1
+
+    def updatesigma(self,epoch):
+
+        if self.updateCount/epoch<0.2:
             self.sigma = self.sigma * 0.99
-        elif c/epoch>0.2:
+        elif self.updateCount/epoch>0.2:
             self.sigma = self.sigma / 0.99
 
 
 
-
-
-
-
-
-
-
-
     def log_basic(self, logger):
-        logger.log('Lambda'.ljust(25) + '%d' % self.lam)
-        logger.log('Mu'.ljust(25) + '%d' % self.u)
+        # logger.log('Lambda'.ljust(25) + '%d' % self.lam)
+        # logger.log('Mu'.ljust(25) + '%d' % self.u)
         logger.log('LearningRate'.ljust(25) + '%f' % self.lr)
-        logger.log('MuW'.ljust(25) + '%f' % self.u_w)
-        logger.log('CSigma'.ljust(25) + '%f' % self.c_sigma)
-        logger.log('CSigmaFactor'.ljust(25) + '%f' % self.c_sigma_factor)
-        logger.log('Const1'.ljust(25) + '%f' % self.const_1)
+        # logger.log('MuW'.ljust(25) + '%f' % self.u_w)
+        # logger.log('CSigma'.ljust(25) + '%f' % self.c_sigma)
+        # logger.log('CSigmaFactor'.ljust(25) + '%f' % self.c_sigma_factor)
+        # logger.log('Const1'.ljust(25) + '%f' % self.const_1)
 
     def log(self, logger):
         logger.log('ParamNorm'.ljust(20) + '%f' % self.magnitude(self.parameters))
         logger.log('StepNorm'.ljust(20) + '%f' % self.magnitude(self.step))
         logger.log('Sigma'.ljust(20) + '%f' % self.sigma)
         logger.log('PSigmaNorm'.ljust(20) + '%f' % self.magnitude(self.p_sigma))
+
+    def log_path(self, game, network, run_name):
+        return "logs_mpi/%s/Baseline/%s/%d/%d/%f/%f/%f/%s" % \
+               (game, network, self.lam, self.u, self.sigma, self.lr, self.c_sigma_factor, run_name)
+
+    # We might want to log other stuff as well ???
+    def stat_string(self):
+        str = '%g\n' % self.sigma
+        return str
+
+class NCSCCOptimizer(BaseOptimizer):
+    # CanonicalES algorithm as in the paper:
+    # Back to Basics: Benchmarking Canonical Evolution Strategies for Playing Atari
+    def __init__(self, train_cpus,parameters, lam, rank, settings,epoch,m):
+        super().__init__(parameters, rank)
+        self.N = train_cpus
+        self.lam = lam
+        self.sigma = settings['sigma']
+        # self.parameters1 = self.parameters
+        self.rew = 0
+        self.rew1 =0
+        self.epoch = epoch
+        self.m = m
+        self.groupnum = 0
+        self.sigmalist = np.ones(self.n) * self.sigma
+        self.sigupdatelist = np.zeros(self.n)
+
+        # One could experiment with different learning_rates.
+        # Disabled for our experiments (by setting to 1).
+        self.lr = settings['learning_rate']
+
+        # Parent population size
+        self.u = settings['mu']
+
+        # One could experiment rescaling c_sigma to stronger adjust sample distribution noise.
+        # Disabled for our experiments (by setting to 1).
+        self.c_sigma_factor = settings['c_sigma_factor']
+
+        # Compute weights for weighted mean of the top self.u offsprings
+        # (parents for the next generation).
+        self.w = np.array([np.log(self.u + 0.5) - np.log(i) for i in range(1, self.u + 1)])
+        self.w /= np.sum(self.w)
+
+        # Noise adaptation stuff.
+        self.p_sigma = np.zeros(self.n)
+        self.u_w = 1 / float(np.sum(np.square(self.w)))
+        self.c_sigma = (self.u_w + 2) / (self.n + self.u_w + 5)
+        self.c_sigma *= self.c_sigma_factor
+        self.const_1 = np.sqrt(self.u_w * self.c_sigma * (2 - self.c_sigma))
+
+    def RandomGrouping(self):
+        randomrange = np.random.permutation(self.n)
+        self.indexvector = randomrange%self.m
+
+    def get_parameters(self):
+        return self.parameters
+
+    def get_parameters1(self,ii):
+        self.parameters1 = self.parameters
+        for i in range(self.n):
+            if self.indexvector[i] == ii:
+                self.parameters1[i] += np.random.normal(0,self.sigmalist[i])
+        return self.parameters1
+
+    def update(self,ppp,BestScore,sigmamsgs,llambda):
+        def calBdistance( para, para1, sigmas, sigmas1):
+            xixj = para - para1
+            xixj = xixj *(2/(sigmas**2+sigmas1**2+1e-8))
+            part1 = 1 / 8 * np.dot(xixj, xixj.T)
+            part2 = 0
+            for i in range(self.n):
+                if self.indexvector[i] == self.groupnum:
+                    part2 += np.log(1e-8 + (sigmas[i] ** 2 + sigmas1[i] ** 2) / (2 * sigmas[i] * sigmas1[i] + 1e-8))
+            part2 = part2/2
+            return part1 + part2
+
+        def calCorr( ppp, para1, sigmamsgs):
+            # order = np.argsort(nums)
+            DBlist = []
+            for i in range(self.N):
+                if i != self.rank-1:
+                    para = ppp[self.n * i:self.n * (i + 1)]
+                    sigmas = sigmamsgs[self.n*i:self.n*(i+1)]
+                    sigmas1 = sigmamsgs[self.n*(self.rank-1):self.n*self.rank]
+                    DB = calBdistance( para, para1, sigmas, sigmas1)
+                    DBlist.append(DB)
+            return np.min(DBlist)
+
+        Corr = calCorr( ppp, self.parameters, sigmamsgs)
+        Corr1= calCorr( ppp, self.parameters1, sigmamsgs)
+        Corr1 = Corr1 / (Corr + Corr1)
+        fx = -self.rew + BestScore
+        fx1 = -self.rew1 + BestScore
+        fx1 = fx1 / (fx + fx1)
+        jud = fx1 / Corr1
+        if jud < llambda:
+            self.parameters = self.parameters1
+            self.rew = self.rew1
+            for i in range(self.n):
+                if self.indexvector[i] == self.groupnum:
+                    self.sigupdatelist[i]+=1
+
+    def updatesigma(self):
+        for i in range(self.n):
+            if self.sigupdatelist[i]/self.epoch<0.2:
+                self.sigmalist[i] = self.sigmalist[i] * 0.99
+            elif self.sigupdatelist[i]/self.epoch>0.2:
+                self.sigmalist[i] = self.sigmalist[i] / 0.99
+
+    # def log_basic(self, logger):
+        # logger.log('Lambda'.ljust(25) + '%d' % self.lam)
+        # logger.log('Mu'.ljust(25) + '%d' % self.u)
+        # logger.log('LearningRate'.ljust(25) + '%f' % self.lr)
+        # logger.log('MuW'.ljust(25) + '%f' % self.u_w)
+        # logger.log('CSigma'.ljust(25) + '%f' % self.c_sigma)
+        # logger.log('CSigmaFactor'.ljust(25) + '%f' % self.c_sigma_factor)
+        # logger.log('Const1'.ljust(25) + '%f' % self.const_1)
+
+
+    # def log(self, logger):
+    #     logger.log('ParamNorm'.ljust(20) + '%f' % self.magnitude(self.parameters))
+    #     logger.log('StepNorm'.ljust(20) + '%f' % self.magnitude(self.step))
+    #     logger.log('Sigma'.ljust(20) + '%f' % self.sigma)
+    #     logger.log('PSigmaNorm'.ljust(20) + '%f' % self.magnitude(self.p_sigma))
 
     def log_path(self, game, network, run_name):
         return "logs_mpi/%s/Baseline/%s/%d/%d/%f/%f/%f/%s" % \
