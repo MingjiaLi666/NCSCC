@@ -405,10 +405,10 @@ class NCSCCOptimizer(BaseOptimizer):
     def get_parameters(self):
         return self.parameters
 
-    def get_parameters1(self,ii):
+    def get_parameters1(self):
         self.parameters1 = self.parameters
         for i in range(self.n):
-            if self.indexvector[i] == ii:
+            if self.indexvector[i] == self.groupnum:
                 self.parameters1[i] += np.random.normal(0,self.sigmalist[i])
         return self.parameters1
 
