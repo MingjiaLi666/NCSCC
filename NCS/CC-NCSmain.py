@@ -44,6 +44,7 @@ def main(ep_per_cpu, game, configuration_file, run_name):
     train_cpus = cpus - 1
     k = 10
     epoch = 5
+    m = 4
 
     # Deduce population size
     lam = train_cpus * ep_per_cpu
@@ -60,6 +61,7 @@ def main(ep_per_cpu, game, configuration_file, run_name):
     vb = policy.get_vb()
 
     # Extract vector with current parameters.
+    #parameter have length of 1693380
     parameters = policy.get_parameters()
 
     # Send parameters from worker 0 to all workers (MPI stuff)
@@ -70,295 +72,177 @@ def main(ep_per_cpu, game, configuration_file, run_name):
 
     # Create optimizer with user defined settings (hyperparameters)
     OptimizerClass = optimizer_dict[configuration['optimizer']]
-    optimizer = OptimizerClass(parameters, lam, rank, configuration["settings"])
+    optimizer = OptimizerClass(train_cpus,parameters, lam, rank, configuration["settings"],epoch,m)
+
 
     # Set the same virtual batch for each worker
     if rank != 0:
         policy.set_vb(vb)
-        lens = [0] * ep_per_cpu
-        rews = [0] * ep_per_cpu
-        # inds = [0] * ep_per_cpu
-        nums = [0] * ep_per_cpu
-        sig = [0] *ep_per_cpu
-        paras = None
-
-        # For each episode in this CPU we get new parameters,
-        # update policy network and perform policy rollout
-        for i in range(ep_per_cpu):
-            e_r = 0
-            e_l = 0
-            ind, p = optimizer.get_parameters()
-            for j in range(k):
-                policy.set_parameters(p)
-                e_rew, e_len = policy.rollout()
-                e_r += e_rew
-                e_l += e_len
-            lens[i] = e_l
-            rews[i] = e_r/k
-            # inds[i] = ind
-            paras = p
-            nums [i] = rank + i
-            sig [i] = optimizer.sigma
-        # dictionary = {
-        #     'parameter':None,
-        #     'rank':rank
-        #
-        # }
-
-        msg = np.array(rews + lens+nums+sig, dtype=np.int32)
-        pp = paras.flatten()
-
+        rews = [0]
+        e_r = 0
+        p = optimizer.get_parameters()
+        policy.set_parameters(p)
+        for j in range(k):
+            e_rew, e_len = policy.rollout()
+            e_r += e_rew
+        rews[0] = e_r/k
+        optimizer.rew = e_r/k
+        msg = np.array(rews)
+        pp = p
     # Only rank 0 worker will log information from the training
     logger = Logger(optimizer.log_path(game, configuration['network'], run_name))
     if rank == 0:
         # Initialize logger, save virtual batch and save some basic stuff at the beginning
         logger.save_vb(vb)
+        logger.log('Game'.ljust(25) + '%s' % game)
+        logger.log('Network'.ljust(25) + '%s' % configuration['network'])
+        logger.log('Optimizer'.ljust(25) + '%s' % configuration['optimizer'])
+        logger.log('Number of CPUs'.ljust(25) + '%d' % cpus)
+        logger.log('Population'.ljust(25) + '%d' % lam)
+        logger.log('Dimensionality'.ljust(25) + '%d' % len(parameters))
 
         # Log basic info from the optimizer
-        optimizer.log_basic(logger)
-        msg = np.zeros(4 * ep_per_cpu, dtype=np.int32)
-        pp = np.zeros((ep_per_cpu,optimizer.n))
-    results = np.empty((cpus, 4 * ep_per_cpu), dtype=np.int32)
-    ppp = np.empty((cpus,optimizer.n*ep_per_cpu))
-
-    comm.Allgather([msg, MPI.INT], [results, MPI.INT])
+        # optimizer.log_basic(logger)
+        msg = np.zeros(1)
+        pp = np.zeros(optimizer.n)
+    results = np.empty((cpus, 1))
+    ppp = np.empty((cpus,optimizer.n))
+    comm.Allgather([msg, MPI.FLOAT], [results, MPI.FLOAT])
     comm.Allgather([pp, MPI.FLOAT], [ppp, MPI.FLOAT])
     results = results[1:, :]
-    ppp = ppp[1:,:]
-    ppp = ppp.flatten()
-    rews = results[:, :ep_per_cpu].flatten()
-    nums = results[:, (2 * ep_per_cpu):(3 * ep_per_cpu)].flatten()
-    sigmas = results[:, (3 * ep_per_cpu):].flatten()
-    comm.Bcast([ppp, MPI.FLOAT], root=0)
-    comm.Bcast([rews, MPI.FLOAT], root=0)
-    comm.Bcast([sigmas, MPI.FLOAT], root=0)
-    # comm.Bcast([rews, MPI.FLOAT], root=0)
-    # comm.Bcast([ppp, MPI.FLOAT], root=0)
+    ppp = ppp[1:,:].flatten()
+    rews = results[:, :1].flatten()
+    BestScore = max(rews)
+    Bestid = np.argmax(rews)
+    BestFound = ppp[Bestid * optimizer.n:(Bestid + 1) * optimizer.n]
     if rank == 0:
-        BestScore = max(rews)
-        BestS = {'score':BestScore}
-        Bestid = np.argmax(rews)
-        BestFound = ppp[Bestid*optimizer.n:(Bestid+1)*optimizer.n]
         logger.log('Best'.ljust(25) + '%f' %BestScore )
 
     # We will count number of steps
-    # frames = 4 * steps (3 * steps for SpaceInvaders)
+    # frames = 4 * steps
     steps_passed = 0
     iteration =1
-
-
     while steps_passed<=25000000:
         # Iteration start time
         iter_start_time = time.time()
         if iteration % epoch == 1:
-            updateCount = [0]*train_cpus
+            optimizer.sigupdatelist= np.zeros(optimizer.n)
         llambda = np.random.normal(1,0.1-0.1*steps_passed/25000000)
         # Workers that run train episodes
-        if rank != 0:
-            # Empty arrays for each episode. We save: length, reward, noise index
-            lens1 = [0] * ep_per_cpu
-            rews1 = [0] * ep_per_cpu
-            nums1 = [0] * ep_per_cpu
-            sig1 = [0] * ep_per_cpu
-            paras1 = None
-            
-
-            # For each episode in this CPU we get new parameters,
-            # update policy network and perform policy rollout
-            for i in range(ep_per_cpu):
+        optimizer.RandomGrouping(m)
+        for ii in range(m):
+            optimizer.groupnum = ii
+            if rank != 0:
+                # Empty arrays for each episode. We save: length, reward, noise index
+                lens1 = [0]
+                rews1 = [0]
+                orew = [0]
+                # sig1 = [0]
+                # For each episode in this CPU we get new parameters,
+                # update policy network and perform policy rollout
                 e_r = 0
                 e_l = 0
-                p = ppp[((rank-1)+i)*optimizer.n:(rank+i)*optimizer.n] + np.random.normal(scale = optimizer.sigma,size = optimizer.n)
+                p = optimizer.get_parameters1()
+                policy.set_parameters(p)
                 for j in range(k):
-                    policy.set_parameters(p)
                     e_rew, e_len = policy.rollout()
                     e_r += e_rew
                     e_l += e_len
-                #p = np.random.normal(scale = optimizer.sigma,size = optimizer.n)
-                #     BestS['score'] = e_rews
-                #     BestFound = p
-                #     comm.bcast(BestS, root=rank)
-                #     comm.Bcast([BestFound, MPI.FLOAT], root=rank)
-
-                lens1[i] = e_l
-                rews1[i] = e_r/k
-                nums1[i] = rank+i
-                sig1[i] = optimizer.sigma
-                paras1 = p
-
-            # Aggregate information, will later send it to each worker using MPI
-            msg1 = np.array(rews1 + lens1 + nums1+sig1, dtype=np.int32)
-            pp1 = paras1.flatten()
-
-        # Worker rank 0 that runs evaluation episodes
-        else:
-            #rews1 = [0] * (ep_per_cpu*train_cpus)
-            #lens1 = [0] * (ep_per_cpu*train_cpus)
-            #for j in range(train_cpus):
-                #for i in range(ep_per_cpu):
-                    #optimizer.parameters = ppp[(i+j) * optimizer.n:( i+j+1) * optimizer.n]
-                    #ind, p = optimizer.get_parameters()
-                    #policy.set_parameters(p)
-                    #reward = 0
-                    #for k in range(10):
-                        #e_rew, e_len = policy.rollout()
-                        #reward +=e_rew
-                    #rews1[i] = reward
-                    #lens1[i] = e_len
-
-            # Empty array, evaluation results are not used for the update
-            msg1 = np.zeros(4 * ep_per_cpu, dtype=np.int32)
-            pp1 = np.zeros((ep_per_cpu, optimizer.n))
-        # MPI stuff
-        # Initialize array which will be updated with information from all workers using MPI
-        results1 = np.empty((cpus, 4 * ep_per_cpu), dtype=np.int32)
-        ppp1 = np.empty((cpus, optimizer.n * ep_per_cpu))
-        comm.Allgather([msg1, MPI.INT], [results1, MPI.INT])
-        comm.Allgather([pp1, MPI.FLOAT], [ppp1, MPI.FLOAT])
-        ppp1 = ppp1[1:, :]
-        ppp1 = ppp1.flatten()
-        
-
-        # Skip empty evaluation results from worker with id 0
-        results1 = results1[1:, :]
-
-        # Extract IDs and rewards
-        rews1 = results1[:, :ep_per_cpu].flatten()
-        lens1 = results1[:, ep_per_cpu:(2*ep_per_cpu)].flatten()
-        sigmas1 = results1[:, (3 * ep_per_cpu):].flatten()
-        if rank ==0:
-            # Update parameters
-            # ppp, nums,rews = optimizer.update(ppp, ppp1, nums, nums1, rews, rews1)
+                lens1[0] = e_l
+                rews1[0] = e_r/k
+                optimizer.rew1 = e_r/k
+                orew[0] = optimizer.rew
+                sig1 = optimizer.sigmalist
+                # Aggregate information, will later send it to each worker using MPI
+                msg1 = np.array(rews1 + lens1 +orew)
+                pp1 = p
+                sigmsg1 = sig1
+            # Worker rank 0 that runs evaluation episodes
+            else:
+                # Empty array, evaluation results are not used for the update
+                msg1 = np.zeros(3 )
+                pp1 = np.zeros( optimizer.n)
+                sigmsg1 = np.zeros(optimizer.n)
+            # MPI stuff
+            # Initialize array which will be updated with information from all workers using MPI
+            results1 = np.empty((cpus, 3 ), dtype=np.int32)
+            ppp1 = np.empty((cpus, optimizer.n ))
+            sigmsgs1 = np.empty((cpus, optimizer.n ))
+            comm.Allgather([msg1, MPI.FLOAT], [results1, MPI.FLOAT])
+            comm.Allgather([pp1, MPI.FLOAT], [ppp1, MPI.FLOAT])
+            comm.Allgather([sigmsg1, MPI.FLOAT], [sigmsgs1, MPI.FLOAT])
+            ppp1 = ppp1[1:, :].flatten()
+            sigmsgs1 = sigmsgs1[1:, :].flatten()
+            # Skip empty evaluation results from worker with id 0
+            results1 = results1[1:, :]
+            # Extract IDs and rewards
+            rews1 = results1[:, :1].flatten()
+            lens1 = results1[:, 1:2].flatten()
+            oreward = results1[:, 2:].flatten()
             newBestidx = np.argmax(rews1)
-            eval_mean_rew = np.mean(rews)
-            eval_mean_rew1 = np.mean(rews1)
-            if np.max(rews1)>BestS['score']:
-                BestS['score'] = rews1[newBestidx]
+
+            if np.max(rews1)>BestScore:
+                BestScore = rews1[newBestidx]
                 BestFound = ppp1[newBestidx*optimizer.n:(newBestidx+1)*optimizer.n]
-            Corr = [0] * train_cpus
-            Corr1 = [0] * train_cpus
-
-            for i in range(train_cpus):
-                # logger.log("i:%s" % i)
-                # logger.log(time.strftime('%Y-%m-%d-%H-%M-%S',time.localtime(time.time())))
-                para = ppp[optimizer.n*i:optimizer.n*(i+1)]
-                para1 = ppp1[optimizer.n * i:optimizer.n * (i + 1)]
-
-                Corr[i] = calCorr(optimizer.n,ppp, para,sigmas,sigmas[i],i)
-                Corr1[i] = calCorr(optimizer.n, ppp, para1, sigmas, sigmas1[i], i)
-            Corr = np.array(Corr)
-            Corr1 = np.array(Corr1)
-            rews = np.array(rews)
-            rews1 = np.array(rews1)
-            Corr1 = Corr1/(Corr+Corr1)
-            fx = -rews + BestS['score']
-            fx1 = -rews1 + BestS['score']
-            # rews = rews/(rews+rews1)
-            fx1 = fx1 / (fx + fx1)
-            jud = fx1/Corr1
-            # print(jud)
-
-            #now update
-            for i in range(train_cpus):
-                # logger.log("update %s" % i)
-                # logger.log(time.strftime('%Y-%m-%d-%H-%M-%S',time.localtime(time.time())))
-                if jud[i] <llambda:
-                    ppp[optimizer.n*i:optimizer.n*(i+1)] = ppp1[optimizer.n * i:optimizer.n * (i + 1)]
-                    sigmas[i] = sigmas1[i]
-                    rews[i] = rews1[i]
-                    updateCount[i]+=1
-
-
-        # Steps passed = Sum of episode steps from all offsprings
-        steps = np.sum(lens1)
-        steps_passed += steps
-
+            #uodate parameters, sigmas, rews
+            optimizer.update(ppp,BestScore,sigmsgs1,llambda)
+            # Steps passed = Sum of episode steps from all offsprings
+            steps = np.sum(lens1)
+            steps_passed += steps
         # Write some logs for this iteration
         # Using logs we are able to recover solution saved
         # after 1 hour of training or after 1 billion frames
         if rank == 0:
+            eval_mean_rew = np.mean(oreward)
+            eval_mean_rew1 = np.mean(rews1)
             iteration_time = (time.time() - iter_start_time)
             time_elapsed = (time.time() - start_time)/60
-            train_mean_rew = np.mean(rews)
-            train_max_rew = np.max(rews)
             logger.log('------------------------------------')
-            logger.log(time.strftime('%Y-%m-%d-%H-%M-%S',time.localtime(time.time())))
             logger.log('Iteration'.ljust(25) + '%f' % iteration)
             logger.log('EvalMeanReward'.ljust(25) + '%f' % eval_mean_rew)
             logger.log('EvalMeanReward1'.ljust(25) + '%f' % eval_mean_rew1)
             logger.log('StepsThisIter'.ljust(25) + '%f' % steps)
             logger.log('StepsSinceStart'.ljust(25)+'%f' %steps_passed)
             logger.log('IterationTime'.ljust(25) + '%f' % iteration_time)
-            logger.log('TimeSinceStart'.ljust(25) + '%d' %time_elapsed)
-            logger.log('Best'.ljust(25) + '%f' %BestS['score'])			
-
+            logger.log('TimeSinceStart'.ljust(25) + '%f' %time_elapsed)
+            logger.log('Best'.ljust(25) + '%f' %BestScore)
             # Give optimizer a chance to log its own stuff
-            optimizer.log(logger)
+            # optimizer.log(logger)
             logger.log('------------------------------------')
             if iteration % 20 == 1:
                 fin_rews = 0
+                p = BestFound
+                policy.set_parameters(p)
                 for i in range(30):
-                    p = BestFound
-                    policy.set_parameters(p)
                     e_rew, e_len = policy.rollout()
                     fin_rews+=e_rew
                 fin_eval = fin_rews/30
             else:
-                fin_eval = 0     
-
+                fin_eval = 0
             # Write stuff for training curve plot
-            stat_string = "{},\t{},\t{},\t{},\t{},\t{}\n".\
+            stat_string = "{},\t{},\t{},\t{}\n".\
                 format(steps_passed, (time.time()-start_time),
-                       eval_mean_rew, eval_mean_rew1, train_mean_rew, fin_eval)
+                        eval_mean_rew1,  fin_eval)
             logger.write_general_stat(stat_string)
             logger.write_optimizer_stat(optimizer.stat_string())
-
             # Save currently proposed solution every 20 iterations
             if iteration % 20 == 1:
                 logger.save_parameters(BestFound, iteration)
         else:
             if iteration%epoch ==0:
-                optimizer.updatesigma(epoch,updateCount)
-        comm.Bcast([ppp, MPI.FLOAT], root=0)
-        comm.Bcast([rews, MPI.FLOAT], root=0)
-        comm.Bcast([sigmas, MPI.FLOAT], root=0)
+                optimizer.updatesigma()
         iteration+=1
     #test best
     if rank == 0:
         final_rews = []
+        p = BestFound
+        policy.set_parameters(p)
         for i in range(200):
-            p = BestFound
-            policy.set_parameters(p)
             e_rew, e_len = policy.rollout()
             final_rews.append(e_rew)
         final_eval = np.mean(final_rews)
         logger.log('Final'.ljust(25) + '%f' % final_eval)
         logger.save_parameters(BestFound,iteration)
-
-
-def calBdistance(n, para,para1,sigma,sigma1):
-    xixj = para - para1
-    part1 = 1/8*np.dot(xixj,xixj.T)*2/(sigma**2+sigma1**2+1e-8)
-    part2 = 1/2*n*np.log(1e-8+(sigma**2+sigma1**2)/(2*sigma*sigma1+1e-8))
-    return part1 + part2
-
-
-def calCorr(n,ppp, para1,sigmalist,sigma1,order1):
-    # order = np.argsort(nums)
-
-    DBlist = []
-    for i in range(len(sigmalist)):
-        if i!=order1:
-            para = ppp[n*i:n*(i+1)]
-
-            sigma = sigmalist[i]
-
-            DB = calBdistance(n, para,para1,sigma,sigma1)
-
-            DBlist.append(DB)
-    return np.min(DBlist)
-
-
 def parse_arguments():
     parser = ArgumentParser()
     parser.add_argument('-e', '--episodes_per_cpu',
@@ -370,8 +254,6 @@ def parse_arguments():
     parser.add_argument('-r', '--run_name', help='Name of the run, used to create log folder name', type=str)
     args = parser.parse_args()
     return args.episodes_per_cpu, args.game, args.configuration_file, args.run_name
-
-
 if __name__ == '__main__':
     ep_per_cpu, game, configuration_file, run_name = parse_arguments()
     main(ep_per_cpu, game, configuration_file, run_name)
