@@ -166,7 +166,7 @@ def main(ep_per_cpu, game, configuration_file, run_name):
                 sigmsg1 = np.zeros(optimizer.n)
             # MPI stuff
             # Initialize array which will be updated with information from all workers using MPI
-            results1 = np.empty((cpus, 3 ), dtype=np.int32)
+            results1 = np.empty((cpus, 3 ))
             ppp1 = np.empty((cpus, optimizer.n ))
             sigmsgs1 = np.empty((cpus, optimizer.n ))
             comm.Allgather([msg1, MPI.FLOAT], [results1, MPI.FLOAT])
