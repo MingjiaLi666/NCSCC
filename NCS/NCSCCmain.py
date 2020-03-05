@@ -186,7 +186,8 @@ def main(ep_per_cpu, game, configuration_file, run_name):
                 BestScore = rews1[newBestidx]
                 BestFound = ppp1[newBestidx*optimizer.n:(newBestidx+1)*optimizer.n]
             #uodate parameters, sigmas, rews
-            optimizer.update(ppp,BestScore,sigmsgs1,llambda)
+            if rank!=0:
+                optimizer.update(ppp,BestScore,sigmsgs1,llambda)
             # Steps passed = Sum of episode steps from all offsprings
             steps = np.sum(lens1)
             steps_passed += steps
@@ -230,7 +231,7 @@ def main(ep_per_cpu, game, configuration_file, run_name):
             if iteration % 20 == 1:
                 logger.save_parameters(BestFound, iteration)
         else:
-            if iteration%epoch ==0:
+            if iteration%epoch ==0& rank!=0:
                 optimizer.updatesigma()
         iteration+=1
     #test best
