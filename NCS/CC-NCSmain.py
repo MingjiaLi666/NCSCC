@@ -1,4 +1,4 @@
-from src.optimizers import OpenAIOptimizer, CanonicalESOptimizer, CanonicalESMeanOptimizer, NCSOptimizer
+from src.optimizers import OpenAIOptimizer, CanonicalESOptimizer, CanonicalESMeanOptimizer, NCSOptimizer,NCSCCOptimizer
 from src.policy import Policy
 from src.logger import Logger
 
@@ -16,7 +16,8 @@ optimizer_dict = {
     'OpenAIOptimizer': OpenAIOptimizer,
     'CanonicalESOptimizer': CanonicalESOptimizer,
     'CanonicalESMeanOptimizer': CanonicalESMeanOptimizer,
-    'NCSOptimizer':NCSOptimizer
+    'NCSOptimizer':NCSOptimizer,
+    'NCSCCOptimizer':NCSCCOptimizer
 }
 
 
