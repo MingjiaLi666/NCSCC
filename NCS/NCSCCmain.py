@@ -130,7 +130,7 @@ def main(ep_per_cpu, game, configuration_file, run_name):
             optimizer.sigupdatelist= np.zeros(optimizer.n)
         llambda = np.random.normal(1,0.1-0.1*steps_passed/25000000)
         # Workers that run train episodes
-        optimizer.RandomGrouping(m)
+        optimizer.RandomGrouping()
         for ii in range(m):
             optimizer.groupnum = ii
             if rank != 0:
