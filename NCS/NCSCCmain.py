@@ -153,27 +153,33 @@ def main(ep_per_cpu, game, configuration_file, run_name):
                 rews1[0] = e_r/k
                 optimizer.rew1 = e_r/k
                 orew[0] = optimizer.rew
-                sig1 = optimizer.sigmalist
+                if iteration % epoch == 1:
+                    sig1 = optimizer.sigmalist
                 # Aggregate information, will later send it to each worker using MPI
                 msg1 = np.array(rews1 + lens1 +orew)
                 pp1 = p
-                sigmsg1 = sig1
+                if iteration % epoch == 1:
+                    sigmsg1 = sig1
             # Worker rank 0 that runs evaluation episodes
             else:
                 # Empty array, evaluation results are not used for the update
                 msg1 = np.zeros(3 )
                 pp1 = np.zeros( optimizer.n)
-                sigmsg1 = np.zeros(optimizer.n)
+                if iteration % epoch == 1:
+                    sigmsg1 = np.zeros(optimizer.n)
             # MPI stuff
             # Initialize array which will be updated with information from all workers using MPI
             results1 = np.empty((cpus, 3 ))
             ppp1 = np.empty((cpus, optimizer.n ))
-            sigmsgs1 = np.empty((cpus, optimizer.n ))
+            if iteration % epoch == 1:
+                sigmsgs1 = np.empty((cpus, optimizer.n ))
             comm.Allgather([msg1, MPI.FLOAT], [results1, MPI.FLOAT])
             comm.Allgather([pp1, MPI.FLOAT], [ppp1, MPI.FLOAT])
-            comm.Allgather([sigmsg1, MPI.FLOAT], [sigmsgs1, MPI.FLOAT])
+            if iteration % epoch == 1:
+                comm.Allgather([sigmsg1, MPI.FLOAT], [sigmsgs1, MPI.FLOAT])
             ppp1 = ppp1[1:, :].flatten()
-            sigmsgs1 = sigmsgs1[1:, :].flatten()
+            if iteration % epoch == 1:
+                sigmsgs1 = sigmsgs1[1:, :].flatten()
             # Skip empty evaluation results from worker with id 0
             results1 = results1[1:, :]
             # Extract IDs and rewards
@@ -231,7 +237,7 @@ def main(ep_per_cpu, game, configuration_file, run_name):
             if iteration % 20 == 1:
                 logger.save_parameters(BestFound, iteration)
         else:
-            if iteration%epoch ==0& rank!=0:
+            if iteration%epoch ==0:
                 optimizer.updatesigma()
         iteration+=1
     #test best
