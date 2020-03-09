@@ -371,45 +371,49 @@ class NCSCCOptimizer(BaseOptimizer):
         self.rew1 =0
         self.epoch = epoch
         self.m = m
+        #self.indexvector = np.zeros(self.n)
         self.groupnum = 0
         self.sigmalist = np.ones(self.n) * self.sigma
         self.sigupdatelist = np.zeros(self.n)
-
+        self.iter = 0
         # One could experiment with different learning_rates.
         # Disabled for our experiments (by setting to 1).
         self.lr = settings['learning_rate']
 
         # Parent population size
-        self.u = settings['mu']
+        #self.u = settings['mu']
 
         # One could experiment rescaling c_sigma to stronger adjust sample distribution noise.
         # Disabled for our experiments (by setting to 1).
-        self.c_sigma_factor = settings['c_sigma_factor']
+        #self.c_sigma_factor = settings['c_sigma_factor']
 
         # Compute weights for weighted mean of the top self.u offsprings
         # (parents for the next generation).
-        self.w = np.array([np.log(self.u + 0.5) - np.log(i) for i in range(1, self.u + 1)])
-        self.w /= np.sum(self.w)
+        #self.w = np.array([np.log(self.u + 0.5) - np.log(i) for i in range(1, self.u + 1)])
+        #self.w /= np.sum(self.w)
 
         # Noise adaptation stuff.
-        self.p_sigma = np.zeros(self.n)
-        self.u_w = 1 / float(np.sum(np.square(self.w)))
-        self.c_sigma = (self.u_w + 2) / (self.n + self.u_w + 5)
-        self.c_sigma *= self.c_sigma_factor
-        self.const_1 = np.sqrt(self.u_w * self.c_sigma * (2 - self.c_sigma))
+        #self.p_sigma = np.zeros(self.n)
+        #self.u_w = 1 / float(np.sum(np.square(self.w)))
+        #self.c_sigma = (self.u_w + 2) / (self.n + self.u_w + 5)
+        #self.c_sigma *= self.c_sigma_factor
+        #self.const_1 = np.sqrt(self.u_w * self.c_sigma * (2 - self.c_sigma))
 
     def RandomGrouping(self):
         randomrange = np.random.permutation(self.n)
         self.indexvector = randomrange%self.m
 
     def get_parameters(self):
-        return self.parameters
+        tem = self.parameters.astype(np.float64)
+        return tem
 
     def get_parameters1(self):
-        self.parameters1 = self.parameters
+        temp = self.parameters
         for i in range(self.n):
             if self.indexvector[i] == self.groupnum:
-                self.parameters1[i] += np.random.normal(0,self.sigmalist[i])
+                temp[i] += np.random.normal(loc=0,scale=self.sigmalist[i],size=None)
+        self.parameters1 = temp.astype(np.float64)
+        #self.parameters1 = self.parameters + np.random.normal(scale = self.sigma,size = self.n)
         return self.parameters1
 
     def update(self,ppp,BestScore,sigmamsgs,llambda):
@@ -435,8 +439,9 @@ class NCSCCOptimizer(BaseOptimizer):
                     DB = calBdistance( para, para1, sigmas, sigmas1)
                     DBlist.append(DB)
             return np.min(DBlist)
-
-        Corr = calCorr( ppp, self.parameters, sigmamsgs)
+        if self.iter%self.epoch == 1:
+            self.sigmamsgs = sigmamsgs
+        Corr = calCorr( ppp, self.parameters,sigmamsgs)
         Corr1= calCorr( ppp, self.parameters1, sigmamsgs)
         Corr1 = Corr1 / (Corr + Corr1)
         fx = -self.rew + BestScore
@@ -457,8 +462,8 @@ class NCSCCOptimizer(BaseOptimizer):
             elif self.sigupdatelist[i]/self.epoch>0.2:
                 self.sigmalist[i] = self.sigmalist[i] / 0.99
 
-    # def log_basic(self, logger):
-        # logger.log('Lambda'.ljust(25) + '%d' % self.lam)
+    def log_basic(self, logger):
+        logger.log('Lambda'.ljust(25) + '%d' % self.lam)
         # logger.log('Mu'.ljust(25) + '%d' % self.u)
         # logger.log('LearningRate'.ljust(25) + '%f' % self.lr)
         # logger.log('MuW'.ljust(25) + '%f' % self.u_w)
@@ -467,15 +472,15 @@ class NCSCCOptimizer(BaseOptimizer):
         # logger.log('Const1'.ljust(25) + '%f' % self.const_1)
 
 
-    # def log(self, logger):
-    #     logger.log('ParamNorm'.ljust(20) + '%f' % self.magnitude(self.parameters))
+    def log(self, logger):
+        logger.log('ParamNorm'.ljust(20) + '%f' % self.magnitude(self.parameters))
     #     logger.log('StepNorm'.ljust(20) + '%f' % self.magnitude(self.step))
     #     logger.log('Sigma'.ljust(20) + '%f' % self.sigma)
     #     logger.log('PSigmaNorm'.ljust(20) + '%f' % self.magnitude(self.p_sigma))
 
     def log_path(self, game, network, run_name):
-        return "logs_mpi/%s/Baseline/%s/%d/%d/%f/%f/%f/%s" % \
-               (game, network, self.lam, self.u, self.sigma, self.lr, self.c_sigma_factor, run_name)
+        return "logs_mpi/%s/Baseline/%s/%f/%s" % \
+               (game, network, self.sigma,  run_name)
 
     # We might want to log other stuff as well ???
     def stat_string(self):
