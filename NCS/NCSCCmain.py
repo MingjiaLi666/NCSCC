@@ -45,7 +45,7 @@ def main(ep_per_cpu, game, configuration_file, run_name):
     train_cpus = cpus - 1
     k = 10
     epoch = 5
-    m = 4
+    m = 1
 
     # Deduce population size
     lam = train_cpus * ep_per_cpu
@@ -156,20 +156,20 @@ def main(ep_per_cpu, game, configuration_file, run_name):
                 if iteration % epoch == 1:
                     sig1 = optimizer.sigmalist
                 # Aggregate information, will later send it to each worker using MPI
-                msg1 = np.array(rews1 + lens1 +orew)
-                pp1 = p
+                msg1 = np.array(rews1 + lens1 +orew,dtype = np.float64)
+                pp1 = optimizer.parameters1
                 if iteration % epoch == 1:
                     sigmsg1 = sig1
             # Worker rank 0 that runs evaluation episodes
             else:
                 # Empty array, evaluation results are not used for the update
-                msg1 = np.zeros(3 )
-                pp1 = np.zeros( optimizer.n)
+                msg1 = np.zeros(3 ,dtype = np.float64)
+                pp1 = optimizer.parameters
                 if iteration % epoch == 1:
                     sigmsg1 = np.zeros(optimizer.n)
             # MPI stuff
             # Initialize array which will be updated with information from all workers using MPI
-            results1 = np.empty((cpus, 3 ))
+            results1 = np.empty((cpus, 3 ),dtype = np.float64)
             ppp1 = np.empty((cpus, optimizer.n ))
             if iteration % epoch == 1:
                 sigmsgs1 = np.empty((cpus, optimizer.n ))
