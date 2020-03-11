@@ -64,6 +64,7 @@ def main(ep_per_cpu, game, configuration_file, run_name):
     # Extract vector with current parameters.
     #parameter have length of 1693380
     parameters = policy.get_parameters()
+    shape = policy.parameter_shapes
 
     # Send parameters from worker 0 to all workers (MPI stuff)
     # to ensure that every worker starts in the same position
