@@ -397,7 +397,25 @@ class NCSCCOptimizer(BaseOptimizer):
         #self.u_w = 1 / float(np.sum(np.square(self.w)))
         #self.c_sigma = (self.u_w + 2) / (self.n + self.u_w + 5)
         #self.c_sigma *= self.c_sigma_factor
-        #self.const_1 = np.sqrt(self.u_w * self.c_sigma * (2 - self.c_sigma))
+        #self.const_1 = np.sqrt(self.u_w * self.c_sigma * (2 - self.c_sigma)
+    def networkGrouping(self):
+        def multi(list):
+            c= 1
+            for ele in list:
+                c =c*ele
+            return c
+        temp = np.zeros(self.n)
+        randorder = np.random.permutation(5)
+        c1 = multi(self.shape[0])+multi(self.shape[1])
+        c2 = c1+multi(self.shape[2])+multi(self.shape[3])
+        c3 = c2+multi(self.shape[4])+multi(self.shape[5])
+        c4 = c3+multi(self.shape[6])
+        temp[:c1] = randorder[0]
+        temp[c1:c2] = randorder[1]
+        temp[c2:c3] = randorder[2]
+        temp[c3:c4] = randorder[3]
+        temp[c4:] = randorder[4]
+        self.indexvector = temp
 
     def RandomGrouping(self):
         randomrange = np.random.permutation(self.n)
