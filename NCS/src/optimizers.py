@@ -361,12 +361,13 @@ class NCSOptimizer(BaseOptimizer):
 class NCSCCOptimizer(BaseOptimizer):
     # CanonicalES algorithm as in the paper:
     # Back to Basics: Benchmarking Canonical Evolution Strategies for Playing Atari
-    def __init__(self, train_cpus,parameters, lam, rank, settings,epoch,m):
+    def __init__(self, train_cpus,parameters,shape, lam, rank, settings,epoch,m):
         super().__init__(parameters, rank)
         self.N = train_cpus
         self.lam = lam
         self.sigma = settings['sigma']
         # self.parameters1 = self.parameters
+        self.shape = shape
         self.rew = 0
         self.rew1 =0
         self.epoch = epoch
