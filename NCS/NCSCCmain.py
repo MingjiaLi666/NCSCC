@@ -74,7 +74,7 @@ def main(ep_per_cpu, game, configuration_file, run_name):
 
     # Create optimizer with user defined settings (hyperparameters)
     OptimizerClass = optimizer_dict[configuration['optimizer']]
-    optimizer = OptimizerClass(train_cpus,parameters, lam, rank, configuration["settings"],epoch,m)
+    optimizer = OptimizerClass(train_cpus,parameters, shape,lam, rank, configuration["settings"],epoch,m)
 
 
     # Set the same virtual batch for each worker
